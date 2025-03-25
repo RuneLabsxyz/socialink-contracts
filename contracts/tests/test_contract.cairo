@@ -17,10 +17,13 @@ fn OWNER() -> ContractAddress {
     contract_address_const::<'OWNER'>()
 }
 
-fn VERIFIED_ADDRESS() -> ContractAddress {
-    contract_address_const::<'VERIFIED_ADDRESS'>()
+fn AUTHORIZED_ADDRESS() -> ContractAddress {
+    contract_address_const::<'AUTHORIZED_ADDRESS'>()
 }
 
+fn NEW_VERIFIER_ADDRESS() -> ContractAddress {
+    contract_address_const::<'NEW_VERIFIER'>()
+}
 
 fn deploy_contract(name: ByteArray, owner: felt252, verifier: felt252) -> ContractAddress {
     let contract = declare(name).unwrap();
@@ -32,22 +35,125 @@ fn deploy_contract(name: ByteArray, owner: felt252, verifier: felt252) -> Contra
 }
 
 #[test]
-fn test_increase_balance() {
+fn test_add_authorized_with_signature() {
     let key_pair = KeyPairTrait::<felt252, felt252>::generate();
-
     let contract_address = deploy_contract("Auth", OWNER().into(), key_pair.public_key);
     let dispatcher = IAuthDispatcher { contract_address };
+    let (r, s): (felt252, felt252) = key_pair.sign(AUTHORIZED_ADDRESS().into()).unwrap();
 
-    let (r, s): (felt252, felt252) = key_pair.sign(VERIFIED_ADDRESS().into()).unwrap();
-
-    start_cheat_caller_address(dispatcher.contract_address, VERIFIED_ADDRESS());
-
+    start_cheat_caller_address(dispatcher.contract_address, AUTHORIZED_ADDRESS());
     dispatcher.add_authorized_with_signature(array![r, s]);
 
-    let can_take_action = dispatcher.can_take_action(VERIFIED_ADDRESS());
-
+    let can_take_action = dispatcher.can_take_action(AUTHORIZED_ADDRESS());
     assert(can_take_action, 'Should be able to take action');
 }
 
+#[test]
+fn test_add_authorized() {
+    let key_pair = KeyPairTrait::<felt252, felt252>::generate();
+    let contract_address = deploy_contract("Auth", OWNER().into(), key_pair.public_key);
+    let dispatcher = IAuthDispatcher { contract_address };
 
+    start_cheat_caller_address(dispatcher.contract_address, OWNER());
+    dispatcher.add_authorized(AUTHORIZED_ADDRESS());
 
+    let can_take_action = dispatcher.can_take_action(AUTHORIZED_ADDRESS());
+    assert(can_take_action, 'Should be able to take action');
+}
+
+#[test]
+fn test_remove_authorized() {
+    let key_pair = KeyPairTrait::<felt252, felt252>::generate();
+    let contract_address = deploy_contract("Auth", OWNER().into(), key_pair.public_key);
+    let dispatcher = IAuthDispatcher { contract_address };
+
+    start_cheat_caller_address(dispatcher.contract_address, OWNER());
+    dispatcher.add_authorized(AUTHORIZED_ADDRESS());
+    assert(dispatcher.can_take_action(AUTHORIZED_ADDRESS()), 'Should be able to take action');
+
+    dispatcher.remove_authorized(AUTHORIZED_ADDRESS());
+    let can_take_action = dispatcher.can_take_action(AUTHORIZED_ADDRESS());
+    assert(!can_take_action, 'Should not take action');
+}
+
+#[test]
+fn test_set_verifier() {
+    let key_pair = KeyPairTrait::<felt252, felt252>::generate();
+    let contract_address = deploy_contract("Auth", OWNER().into(), key_pair.public_key);
+    let dispatcher = IAuthDispatcher { contract_address };
+
+    start_cheat_caller_address(dispatcher.contract_address, OWNER());
+
+    let key_pair_new_verifier = KeyPairTrait::<felt252, felt252>::generate();
+    dispatcher.set_verifier(key_pair_new_verifier.public_key);
+    let (r, s): (felt252, felt252) = key_pair_new_verifier
+        .sign(AUTHORIZED_ADDRESS().into())
+        .unwrap();
+
+    start_cheat_caller_address(dispatcher.contract_address, AUTHORIZED_ADDRESS());
+    dispatcher.add_authorized_with_signature(array![r, s]);
+
+    assert(dispatcher.can_take_action(AUTHORIZED_ADDRESS()), 'Should be able to take action');
+}
+
+#[test]
+fn test_add_verifier_account() {
+    let key_pair = KeyPairTrait::<felt252, felt252>::generate();
+    let contract_address = deploy_contract("Auth", OWNER().into(), key_pair.public_key);
+    let dispatcher = IAuthDispatcher { contract_address };
+
+    start_cheat_caller_address(dispatcher.contract_address, OWNER());
+    dispatcher.add_verifier(NEW_VERIFIER_ADDRESS());
+
+    start_cheat_caller_address(dispatcher.contract_address, NEW_VERIFIER_ADDRESS());
+    dispatcher.add_authorized(AUTHORIZED_ADDRESS());
+
+    assert(dispatcher.can_take_action(AUTHORIZED_ADDRESS()), 'Verifier should be authorized');
+}
+
+#[test]
+#[should_panic()]
+fn test_remove_verifier() {
+    let key_pair = KeyPairTrait::<felt252, felt252>::generate();
+    let contract_address = deploy_contract("Auth", OWNER().into(), key_pair.public_key);
+    let dispatcher = IAuthDispatcher { contract_address };
+
+    start_cheat_caller_address(dispatcher.contract_address, OWNER());
+    dispatcher.add_verifier(NEW_VERIFIER_ADDRESS());
+
+    start_cheat_caller_address(dispatcher.contract_address, NEW_VERIFIER_ADDRESS());
+    dispatcher.add_authorized(AUTHORIZED_ADDRESS());
+    assert(dispatcher.can_take_action(AUTHORIZED_ADDRESS()), 'be authorized');
+
+    start_cheat_caller_address(dispatcher.contract_address, OWNER());
+    dispatcher.remove_verifier(NEW_VERIFIER_ADDRESS());
+
+    start_cheat_caller_address(dispatcher.contract_address, NEW_VERIFIER_ADDRESS());
+    dispatcher.add_authorized(AUTHORIZED_ADDRESS());
+}
+
+#[test]
+fn test_lock_and_unlock_actions() {
+    let key_pair = KeyPairTrait::<felt252, felt252>::generate();
+    let contract_address = deploy_contract("Auth", OWNER().into(), key_pair.public_key);
+    let dispatcher = IAuthDispatcher { contract_address };
+
+    start_cheat_caller_address(dispatcher.contract_address, OWNER());
+    dispatcher.add_authorized(AUTHORIZED_ADDRESS());
+
+    dispatcher.lock_actions();
+    assert(!dispatcher.can_take_action(AUTHORIZED_ADDRESS()), 'Actions should be locked');
+
+    dispatcher.unlock_actions();
+    assert(dispatcher.can_take_action(AUTHORIZED_ADDRESS()), 'Actions should be unlocked');
+}
+
+#[test]
+fn test_get_owner() {
+    let key_pair = KeyPairTrait::<felt252, felt252>::generate();
+    let contract_address = deploy_contract("Auth", OWNER().into(), key_pair.public_key);
+    let dispatcher = IAuthDispatcher { contract_address };
+
+    let owner = dispatcher.get_owner();
+    assert(owner == OWNER(), 'Owner should match');
+}
