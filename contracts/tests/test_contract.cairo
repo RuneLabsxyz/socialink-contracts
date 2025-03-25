@@ -1,7 +1,9 @@
 use starknet::ContractAddress;
-use starknet::{contract_address_const};
+use starknet::{contract_address_const, get_block_timestamp};
 
-use snforge_std::{declare, ContractClassTrait, start_cheat_caller_address};
+use snforge_std::{
+    declare, ContractClassTrait, start_cheat_caller_address, start_cheat_block_timestamp_global
+};
 
 use snforge_std::signature::KeyPairTrait;
 use snforge_std::signature::stark_curve::{
@@ -156,4 +158,29 @@ fn test_get_owner() {
 
     let owner = dispatcher.get_owner();
     assert(owner == OWNER(), 'Owner should match');
+}
+
+
+#[test]
+fn test_expiration() {
+    let key_pair = KeyPairTrait::<felt252, felt252>::generate();
+    let contract_address = deploy_contract("Auth", OWNER().into(), key_pair.public_key);
+    let dispatcher = IAuthDispatcher { contract_address };
+
+    // Add an authorized address
+    start_cheat_caller_address(dispatcher.contract_address, OWNER());
+    dispatcher.add_authorized(AUTHORIZED_ADDRESS());
+    assert(dispatcher.can_take_action(AUTHORIZED_ADDRESS()), 'Should be able to take action');
+
+    // Set expiration to current timestamp + 100
+    let current_timestamp = get_block_timestamp();
+    dispatcher.set_expiration(current_timestamp + 100);
+    assert(dispatcher.get_expiration() == current_timestamp + 100, 'Expiration not set correctly');
+
+    // Actions should still work before expiration
+    assert(dispatcher.can_take_action(AUTHORIZED_ADDRESS()), 'Should be able to take action');
+
+    // Advance time past expiration
+    start_cheat_block_timestamp_global(current_timestamp + 101);
+    assert(!dispatcher.can_take_action(AUTHORIZED_ADDRESS()), 'time expiration reached');
 }
