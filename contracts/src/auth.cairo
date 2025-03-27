@@ -13,10 +13,12 @@ pub trait IAuth<TContractState> {
 
     fn lock_actions(ref self: TContractState);
     fn unlock_actions(ref self: TContractState);
+    fn set_expiration(ref self: TContractState, expiration_timestamp: u64);
 
     //getter
     fn can_take_action(self: @TContractState, address: ContractAddress) -> bool;
     fn get_owner(self: @TContractState) -> ContractAddress;
+    fn get_expiration(self: @TContractState) -> u64;
 }
 
 #[starknet::contract]
@@ -34,6 +36,7 @@ mod Auth {
         AddressAuthorized: AddressAuthorized,
         AddressRemoved: AddressRemoved,
         VerifierUpdated: VerifierUpdated,
+        ExpirationSet: ExpirationSet,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -54,6 +57,12 @@ mod Auth {
         old_verifier: felt252,
     }
 
+    #[derive(Drop, starknet::Event)]
+    struct ExpirationSet {
+        timestamp: u64,
+        set_at: u64
+    }
+
     #[storage]
     struct Storage {
         authorized_addresses: Map::<ContractAddress, bool>,
@@ -61,6 +70,7 @@ mod Auth {
         verifier: felt252,
         owner: ContractAddress,
         actions_locked: bool,
+        expiration_timestamp: u64,
     }
 
     #[constructor]
@@ -69,6 +79,7 @@ mod Auth {
         self.verifier.write(verifier);
 
         self.actions_locked.write(false);
+        self.expiration_timestamp.write(0);
     }
 
     #[abi(embed_v0)]
@@ -149,15 +160,37 @@ mod Auth {
             self.actions_locked.write(false);
         }
 
+        fn set_expiration(ref self: ContractState, expiration_timestamp: u64) {
+            let caller = get_caller_address();
+            assert(caller == self.owner.read(), 'Only owner can set expiration');
+            assert(expiration_timestamp > get_block_timestamp(), 'Expiration must be future');
+            self.expiration_timestamp.write(expiration_timestamp);
+            self
+                .emit(
+                    Event::ExpirationSet(
+                        ExpirationSet {
+                            timestamp: expiration_timestamp, set_at: get_block_timestamp()
+                        }
+                    )
+                );
+        }
+
+
         //getter
         fn get_owner(self: @ContractState) -> ContractAddress {
             return self.owner.read();
         }
 
+        fn get_expiration(self: @ContractState) -> u64 {
+            self.expiration_timestamp.read()
+        }
+
         fn can_take_action(self: @ContractState, address: ContractAddress) -> bool {
+            let expiration = self.expiration_timestamp.read();
+            let is_not_expired = expiration == 0 || get_block_timestamp() < expiration;
             let authorized = self.authorized_addresses.read(address);
             let actions_locked = self.actions_locked.read();
-            return authorized && !actions_locked;
+            is_not_expired && authorized && !actions_locked
         }
     }
 
