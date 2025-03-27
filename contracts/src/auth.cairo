@@ -188,7 +188,9 @@ mod Auth {
         fn can_take_action(self: @ContractState, address: ContractAddress) -> bool {
             let expiration = self.expiration_timestamp.read();
             let is_not_expired = expiration == 0 || get_block_timestamp() < expiration;
-            is_not_expired && !self.actions_locked.read() && self.authorized_addresses.read(address)
+            let authorized = self.authorized_addresses.read(address);
+            let actions_locked = self.actions_locked.read();
+            is_not_expired && authorized && !actions_locked
         }
     }
 
